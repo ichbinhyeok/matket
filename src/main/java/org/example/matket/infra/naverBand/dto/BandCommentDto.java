@@ -18,7 +18,8 @@ public class BandCommentDto {
     public static class Item {
         private String content;      // 댓글 내용
         private Author author;       // 작성자 정보
-        private long created_at;     // 작성일 (Timestamp)
+        private long created_at;// 작성일 (Timestamp)
+        private String comment_key; //댓글 고유 키
     }
 
     @Data

@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-@Tag(name = "Naver Band API", description = "네이버 밴드 조회 및 댓글 관리 API") // [Swagger] 그룹 이름 설정
+@Tag(name = "Naver Band API", description = "네이버 밴드 조회 및 댓글 관리 API")
 @RestController
 @RequiredArgsConstructor
 public class BandTestController {
@@ -33,7 +33,7 @@ public class BandTestController {
         return bandApiService.getBandList(testAccessToken);
     }
 
-    @Operation(summary = "[테스트용] 특정 밴드 글 목록 조회", description = "yml에 설정된 밴드 키를 사용하여 게시글 목록을 조회합니다.")
+    @Operation(summary = "[테스트용] 특정 밴드 글 목록 조회")
     @GetMapping("/test/posts")
     public List<BandPostDto.Item> showBandPosts() {
         return bandApiService.getBandPosts(testAccessToken, targetBandKey);
@@ -44,27 +44,22 @@ public class BandTestController {
     @Operation(summary = "댓글 목록 조회", description = "특정 밴드 게시글의 댓글 전체를 가져옵니다.")
     @GetMapping("/{bandKey}/posts/{postKey}/comments")
     public ResponseEntity<List<BandCommentDto.Item>> getComments(
-            @Parameter(hidden = true) // [Swagger] 이미 전역 설정(Authorize 버튼)이 있으므로 개별 파라미터는 숨김 처리
+            @Parameter(hidden = true)
             @RequestHeader("Authorization") String accessToken,
-
-            @Parameter(description = "밴드 고유 키 (band_key)", example = "AAAA...")
             @PathVariable String bandKey,
-
-            @Parameter(description = "게시글 고유 키 (post_key)", example = "123456789")
             @PathVariable String postKey) {
 
         String cleanToken = accessToken.replace("Bearer ", "");
         List<BandCommentDto.Item> comments = bandApiService.getComments(cleanToken, bandKey, postKey);
-
         return ResponseEntity.ok(comments);
     }
 
-    @Operation(summary = "댓글 작성", description = "특정 게시글에 댓글을 작성합니다.")
+    // (기존 일반 댓글 작성)
+    @Operation(summary = "댓글 작성", description = "특정 게시글에 일반 댓글을 작성합니다.")
     @PostMapping("/{bandKey}/posts/{postKey}/comments")
     public ResponseEntity<String> writeComment(
             @Parameter(hidden = true)
             @RequestHeader("Authorization") String accessToken,
-
             @PathVariable String bandKey,
             @PathVariable String postKey,
             @RequestBody CommentWriteRequestDto requestDto

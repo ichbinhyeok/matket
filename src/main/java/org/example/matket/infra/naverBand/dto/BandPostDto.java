@@ -6,6 +6,8 @@ import java.util.List;
 @Data
 public class BandPostDto {
     private ResultData result_data;
+    private int result_code;
+
 
     @Data
     public static class ResultData {
