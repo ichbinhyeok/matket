@@ -1,0 +1,11 @@
+package org.example.matket.domain.repository;
+
+import org.example.matket.domain.Comment;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.Optional;
+
+public interface CommentRepository extends JpaRepository<Comment, Long> {
+
+    Optional<Comment> findByBandCommentKey(String bandCommentKey);
+}
