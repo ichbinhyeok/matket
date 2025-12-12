@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.example.matket.infra.naverBand.dto.BandCommentDto;
 import org.example.matket.infra.naverBand.dto.BandListResponse;
+import org.example.matket.infra.naverBand.dto.BandPostDetailDto;
 import org.example.matket.infra.naverBand.dto.BandPostDto;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
@@ -21,13 +22,14 @@ public class BandApiService {
 
     private final String BAND_LIST_URL = "https://openapi.band.us/v2.1/bands";
     private final String BAND_POSTS_URL = "https://openapi.band.us/v2/band/posts?access_token=%s&band_key=%s&locale=ko_KR";
+
+    // (목록에 없는 옛날 글 조회용)
+    private final String BAND_POST_DETAIL_URL = "https://openapi.band.us/v2/band/post?access_token=%s&band_key=%s&post_key=%s";
+
     private final String BAND_COMMENTS_URL = "https://openapi.band.us/v2/band/post/comments?access_token=%s&band_key=%s&post_key=%s";
     private final String BAND_COMMENT_WRITE_URL = "https://openapi.band.us/v2/band/post/comment/create";
 
-    // ... (기존 getBandList, getBandPosts, getComments 메서드는 그대로 둠) ...
-
     public BandListResponse getBandList(String accessToken) {
-        // (기존 코드 생략 - 위와 동일)
         RestTemplate restTemplate = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
         headers.set("Authorization", "Bearer " + accessToken);
@@ -37,13 +39,12 @@ public class BandApiService {
     }
 
     public List<BandPostDto.Item> getBandPosts(String accessToken, String bandKey) {
-        // (기존 코드 생략 - 위와 동일)
         RestTemplate restTemplate = new RestTemplate();
         String requestUrl = String.format(BAND_POSTS_URL, accessToken, bandKey);
         try {
             BandPostDto response = restTemplate.getForObject(requestUrl, BandPostDto.class);
-            if (response != null && response.getResult_code() == 1 && response.getResult_data() != null) {
-                return response.getResult_data().getItems();
+            if (response != null && response.getResultCode() == 1 && response.getResultData() != null) {
+                return response.getResultData().getItems();
             }
         } catch (Exception e) {
             log.error("API 호출 중 에러 발생: {}", e.getMessage());
@@ -51,14 +52,28 @@ public class BandApiService {
         return List.of();
     }
 
+    // [추가] 게시글 상세 조회 (단건) 메서드
+    public BandPostDto.Item getPostDetail(String accessToken, String bandKey, String postKey) {
+        RestTemplate restTemplate = new RestTemplate();
+        String requestUrl = String.format(BAND_POST_DETAIL_URL, accessToken, bandKey, postKey);
+        try {
+            BandPostDetailDto response = restTemplate.getForObject(requestUrl, BandPostDetailDto.class);
+            if (response != null && response.getResultCode() == 1 && response.getResultData() != null) {
+                return response.getResultData().getPost();
+            }
+        } catch (Exception e) {
+            log.error("게시글 상세 조회 실패: {}", e.getMessage());
+        }
+        return null; // 실패 시 null 반환 -> Service에서 예외 처리
+    }
+
     public List<BandCommentDto.Item> getComments(String accessToken, String bandKey, String postKey) {
-        // (기존 코드 생략 - 위와 동일)
         RestTemplate restTemplate = new RestTemplate();
         String requestUrl = String.format(BAND_COMMENTS_URL, accessToken, bandKey, postKey);
         try {
             BandCommentDto response = restTemplate.getForObject(requestUrl, BandCommentDto.class);
-            if (response != null && response.getResult_data() != null) {
-                return response.getResult_data().getItems();
+            if (response != null && response.getResultData() != null) {
+                return response.getResultData().getItems();
             }
         } catch (Exception e) {
             log.error("댓글 조회 실패: {}", e.getMessage());
@@ -66,7 +81,6 @@ public class BandApiService {
         return List.of();
     }
 
-    // ... (기존 writeComment 메서드 그대로 유지) ...
     public boolean writeComment(String accessToken, String bandKey, String postKey, String content) {
         RestTemplate restTemplate = new RestTemplate();
         HttpHeaders headers = new HttpHeaders();
