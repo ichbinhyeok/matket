@@ -19,7 +19,7 @@ public class Order {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
-    private Post post;
+    private Product product;
 
     @Column(nullable = false)
     private Integer quantity;
