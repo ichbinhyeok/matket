@@ -6,14 +6,22 @@ import org.example.matket.domain.Comment;
 import org.example.matket.domain.Post;
 import org.example.matket.domain.enums.ParsedType;
 import org.example.matket.domain.repository.CommentRepository;
+import org.example.matket.domain.repository.OrderItemRepository;
 import org.example.matket.domain.repository.PostRepository;
 import org.example.matket.infra.naverBand.dto.BandCommentDto;
 import org.example.matket.infra.naverBand.dto.BandPostDto;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -24,6 +32,9 @@ public class BandCommentCollectorService {
     private final BandApiService bandApiService;
     private final PostRepository postRepository;
     private final CommentRepository commentRepository;
+    private final OrderItemRepository orderItemRepository;
+    private final ReservationSummaryService reservationSummaryService;
+    private final PlatformTransactionManager transactionManager;
 
     @Value("${band.test-access-token}")
     private String defaultAccessToken;
@@ -31,49 +42,140 @@ public class BandCommentCollectorService {
     @Value("${band.jorye-key}")
     private String defaultBandKey;
 
-    @Transactional
     public void collectComments(String postKey) {
         collectComments(defaultBandKey, postKey);
     }
 
-    @Transactional
     public void collectComments(String bandKey, String postKey) {
         collectComments(defaultAccessToken, bandKey, postKey);
     }
 
-    @Transactional
     public void collectComments(String accessToken, String bandKey, String postKey) {
-        // 1. 게시글(Post) 정보가 DB에 없으면 먼저 저장 (초기화)
         Post post = initializePost(accessToken, bandKey, postKey);
+        LocalDateTime lastCollectedAt = post.getLastCollectedAt();
 
-        // 2. 댓글 목록 가져오기
-        List<BandCommentDto.Item> comments = bandApiService.getComments(accessToken, bandKey, postKey);
+        Map<String, String> nextParams = null;
+        LocalDateTime latestCollected = lastCollectedAt;
 
-        for (BandCommentDto.Item item : comments) {
-            // DTO 수정 후 getCommentKey() 사용 (CamelCase)
-            Optional<Comment> existing = commentRepository.findByBandCommentKey(item.getCommentKey());
-            if (existing.isPresent()) {
+        while (true) {
+            BandCommentDto.ResultData resultData = bandApiService.getComments(accessToken, bandKey, postKey, nextParams);
+            if (resultData == null || resultData.getItems() == null) {
+                log.warn("댓글 페이지 수집 중 네트워크 오류 또는 응답 없음. postKey={}", postKey);
+                break;
+            }
+
+            List<Comment> batch = new ArrayList<>();
+            for (BandCommentDto.Item item : resultData.getItems()) {
+                LocalDateTime createdAt = toLocalDateTime(item.getCreatedAt());
+                if (lastCollectedAt != null && !createdAt.isAfter(lastCollectedAt)) {
+                    continue;
+                }
+
+                Optional<Comment> existing = commentRepository.findByBandCommentKey(item.getCommentKey());
+                if (existing.isPresent()) {
+                    continue;
+                }
+
+                ParseResult parseResult = parseOrderContent(item.getContent());
+                Comment comment = Comment.builder()
+                        .bandCommentKey(item.getCommentKey())
+                        .post(post)
+                        .authorKey(item.getAuthor().getUserKey())
+                        .authorName(item.getAuthor().getName())
+                        .content(item.getContent())
+                        .parsedType(parseResult.parsedType())
+                        .parsedData(parseResult.data())
+                        .build();
+
+                comment.setOriginCreatedAt(item.getCreatedAt());
+                comment.syncOrderItemsFromParsedData();
+                batch.add(comment);
+
+                if (latestCollected == null || createdAt.isAfter(latestCollected)) {
+                    latestCollected = createdAt;
+                }
+            }
+
+            persistBatch(batch);
+
+            nextParams = Optional.ofNullable(resultData.getPaging())
+                    .map(BandCommentDto.Paging::getNextParams)
+                    .orElse(null);
+
+            if (nextParams == null || nextParams.isEmpty()) {
+                break;
+            }
+        }
+
+        if (latestCollected != null) {
+            post.markCollectedAt(latestCollected);
+            postRepository.save(post);
+            reservationSummaryService.evict(post.getPostDate());
+        }
+        log.info("댓글 수집 완료: 게시글({})에 대한 최신 수집 시각 {}", postKey, latestCollected);
+    }
+
+    private void persistBatch(List<Comment> batch) {
+        if (batch.isEmpty()) {
+            return;
+        }
+
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.executeWithoutResult(status -> {
+            batch.forEach(comment -> {
+                commentRepository.save(comment);
+                if (ParsedType.ORDER.equals(comment.getParsedType()) && !comment.getOrderItems().isEmpty()) {
+                    orderItemRepository.saveAll(comment.getOrderItems());
+                }
+            });
+        });
+    }
+
+    private ParseResult parseOrderContent(String content) {
+        if (content == null || content.isBlank()) {
+            return ParseResult.empty();
+        }
+
+        Map<String, Integer> parsed = new LinkedHashMap<>();
+        String[] tokens = content.split("[\\n,]");
+        for (String token : tokens) {
+            String[] colonSplit = token.split(":", 2);
+            if (colonSplit.length == 2 && isNumeric(colonSplit[1].trim())) {
+                parsed.merge(colonSplit[0].trim(), Integer.parseInt(colonSplit[1].trim()), Integer::sum);
                 continue;
             }
 
-            Comment comment = Comment.builder()
-                    .bandCommentKey(item.getCommentKey())
-                    .post(post)
-                    .authorKey(item.getAuthor().getUserKey())
-                    .authorName(item.getAuthor().getName())
-                    .content(item.getContent())
-                    .parsedType(ParsedType.MISC)
-                    .build();
-
-            // 시간 설정 (Unix Timestamp -> LocalDateTime)
-            comment.setOriginCreatedAt(item.getCreatedAt());
-
-            commentRepository.save(comment);
+            String[] xSplit = token.split("[xX*]", 2);
+            if (xSplit.length == 2 && isNumeric(xSplit[1].trim())) {
+                parsed.merge(xSplit[0].trim(), Integer.parseInt(xSplit[1].trim()), Integer::sum);
+            }
         }
-        log.info("댓글 수집 완료: 게시글({})에 대한 댓글 {}개 확인", postKey, comments.size());
+
+        if (parsed.isEmpty()) {
+            return ParseResult.empty();
+        }
+        return new ParseResult(ParsedType.ORDER, parsed);
     }
 
-    @Transactional
+    private boolean isNumeric(String value) {
+        try {
+            Integer.parseInt(value);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    private LocalDateTime toLocalDateTime(Long unixMillis) {
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(unixMillis), ZoneId.systemDefault());
+    }
+
+    private record ParseResult(ParsedType parsedType, Map<String, Integer> data) {
+        static ParseResult empty() {
+            return new ParseResult(ParsedType.MISC, Map.of());
+        }
+    }
+
     public Post initializePost(String accessToken, String bandKey, String postKey) {
         return postRepository.findByBandPostKey(postKey)
                 .orElseGet(() -> createPostFromApi(accessToken, bandKey, postKey));

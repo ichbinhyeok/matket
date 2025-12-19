@@ -9,46 +9,62 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.time.LocalDateTime;
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
 public class ReservationSummaryService {
 
     private final CommentRepository commentRepository;
+    private final Map<LocalDate, CacheEntry> cache = new ConcurrentHashMap<>();
+    private static final Duration TTL = Duration.ofMinutes(5);
 
     @Transactional(readOnly = true)
     public ReservationSummaryDto getTodayReservationSummary(LocalDate date) {
+        CacheEntry cached = cache.get(date);
+        if (cached != null && !cached.isExpired()) {
+            return cached.value();
+        }
+
         List<Comment> comments = commentRepository.findByPost_PostDate(date);
         Map<String, Integer> aggregated = new HashMap<>();
 
         comments.stream()
                 .filter(comment -> ParsedType.ORDER.equals(comment.getParsedType()))
-                .forEach(comment -> mergeParsedData(comment, aggregated));
+                .forEach(comment -> mergeParsedData(comment.getParsedData(), aggregated));
 
-        return new ReservationSummaryDto(date, aggregated);
+        ReservationSummaryDto dto = new ReservationSummaryDto(date, aggregated);
+        cache.put(date, new CacheEntry(dto, LocalDateTime.now().plus(TTL)));
+        return dto;
     }
 
-    private void mergeParsedData(Comment comment, Map<String, Integer> aggregated) {
-        if (comment.getParsedData() == null || comment.getParsedData().isBlank()) {
+    public void evict(LocalDate date) {
+        cache.remove(date);
+    }
+
+    public void evictAll() {
+        cache.clear();
+    }
+
+    private void mergeParsedData(Map<String, Integer> parsedData, Map<String, Integer> aggregated) {
+        if (parsedData == null || parsedData.isEmpty()) {
             return;
         }
 
-        String[] lines = comment.getParsedData().split("\n");
-        for (String line : lines) {
-            String[] parts = line.split(":", 2);
-            if (parts.length < 2) {
+        for (Map.Entry<String, Integer> entry : parsedData.entrySet()) {
+            if (entry.getKey() == null || entry.getValue() == null) {
                 continue;
             }
-            String productName = parts[0].trim();
-            try {
-                int quantity = Integer.parseInt(parts[1].trim());
-                aggregated.merge(productName, quantity, Integer::sum);
-            } catch (NumberFormatException ignored) {
-                // Skip lines that are not properly formatted
-            }
+            aggregated.merge(entry.getKey(), entry.getValue(), Integer::sum);
+        }
+    }
+
+    private record CacheEntry(ReservationSummaryDto value, LocalDateTime expireAt) {
+        boolean isExpired() {
+            return LocalDateTime.now().isAfter(expireAt);
         }
     }
 }

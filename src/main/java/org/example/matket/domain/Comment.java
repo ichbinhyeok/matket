@@ -2,11 +2,17 @@ package org.example.matket.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.example.matket.domain.OrderItem;
+import org.example.matket.domain.converter.JsonMapConverter;
 import org.example.matket.domain.enums.ParsedType;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -38,13 +44,33 @@ public class Comment {
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
-    private ParsedType parsedType;
+    private ParsedType parsedType = ParsedType.MISC;
 
+    @Builder.Default
     @Lob
-    private String parsedData;
+    @Convert(converter = JsonMapConverter.class)
+    private Map<String, Integer> parsedData = new LinkedHashMap<>();
+
+    @Builder.Default
+    @OneToMany(mappedBy = "comment", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderItem> orderItems = new ArrayList<>();
 
     public void setOriginCreatedAt(Long unixMillis) {
         this.createdAt = LocalDateTime.ofInstant(Instant.ofEpochMilli(unixMillis), ZoneId.systemDefault());
+    }
+
+    public void setParsedData(Map<String, Integer> parsedData) {
+        this.parsedData = parsedData == null ? new LinkedHashMap<>() : new LinkedHashMap<>(parsedData);
+    }
+
+    public void syncOrderItemsFromParsedData() {
+        if (parsedData == null || parsedData.isEmpty()) {
+            orderItems.clear();
+            return;
+        }
+        orderItems.clear();
+        parsedData.forEach((product, qty) -> orderItems.add(new OrderItem(this, product, qty)));
     }
 }
