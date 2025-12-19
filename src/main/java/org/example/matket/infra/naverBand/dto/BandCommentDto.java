@@ -3,6 +3,7 @@ package org.example.matket.infra.naverBand.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import java.util.List;
+import java.util.Map;
 
 // 댓글 목록 조회 결과 매핑용
 @Data
@@ -46,6 +47,6 @@ public class BandCommentDto {
     @Data
     public static class Paging {
         @JsonProperty("next_params")
-        private String nextParams; // 다음 댓글 조회용
+        private Map<String, String> nextParams; // 다음 댓글 조회용
     }
 }

@@ -39,9 +39,20 @@ public class Post {
     @Lob
     private String productsDetected;
 
+    private LocalDateTime lastCollectedAt;
+
     public void setOriginCreatedAt(Long unixMillis) {
         LocalDateTime originTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(unixMillis), ZoneId.systemDefault());
         this.createdAt = originTime;
         this.postDate = originTime.toLocalDate();
+    }
+
+    public void markCollectedAt(LocalDateTime collectedAt) {
+        if (collectedAt == null) {
+            return;
+        }
+        if (this.lastCollectedAt == null || collectedAt.isAfter(this.lastCollectedAt)) {
+            this.lastCollectedAt = collectedAt;
+        }
     }
 }

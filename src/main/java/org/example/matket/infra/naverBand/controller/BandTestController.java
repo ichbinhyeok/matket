@@ -10,7 +10,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 @Tag(name = "Naver Band API", description = "네이버 밴드 조회 및 댓글 관리 API")
 @RestController
@@ -50,8 +53,23 @@ public class BandTestController {
             @PathVariable String postKey) {
 
         String cleanToken = accessToken.replace("Bearer ", "");
-        List<BandCommentDto.Item> comments = bandApiService.getComments(cleanToken, bandKey, postKey);
-        return ResponseEntity.ok(comments);
+        List<BandCommentDto.Item> all = new ArrayList<>();
+        Map<String, String> nextParams = null;
+
+        while (true) {
+            BandCommentDto.ResultData resultData = bandApiService.getComments(cleanToken, bandKey, postKey, nextParams);
+            if (resultData == null || resultData.getItems() == null || resultData.getItems().isEmpty()) {
+                break;
+            }
+            all.addAll(resultData.getItems());
+            nextParams = Optional.ofNullable(resultData.getPaging())
+                    .map(BandCommentDto.Paging::getNextParams)
+                    .orElse(null);
+            if (nextParams == null || nextParams.isEmpty()) {
+                break;
+            }
+        }
+        return ResponseEntity.ok(all);
     }
 
     // (기존 일반 댓글 작성)

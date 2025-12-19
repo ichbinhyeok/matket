@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.List;
 import java.util.Map;
@@ -26,7 +27,7 @@ public class BandApiService {
     // (목록에 없는 옛날 글 조회용)
     private final String BAND_POST_DETAIL_URL = "https://openapi.band.us/v2/band/post?access_token=%s&band_key=%s&post_key=%s";
 
-    private final String BAND_COMMENTS_URL = "https://openapi.band.us/v2/band/post/comments?access_token=%s&band_key=%s&post_key=%s";
+    private final String BAND_COMMENTS_URL = "https://openapi.band.us/v2/band/post/comments";
     private final String BAND_COMMENT_WRITE_URL = "https://openapi.band.us/v2/band/post/comment/create";
 
     public BandListResponse getBandList(String accessToken) {
@@ -67,18 +68,27 @@ public class BandApiService {
         return null; // 실패 시 null 반환 -> Service에서 예외 처리
     }
 
-    public List<BandCommentDto.Item> getComments(String accessToken, String bandKey, String postKey) {
+    public BandCommentDto.ResultData getComments(String accessToken, String bandKey, String postKey, Map<String, String> nextParams) {
         RestTemplate restTemplate = new RestTemplate();
-        String requestUrl = String.format(BAND_COMMENTS_URL, accessToken, bandKey, postKey);
+        UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(BAND_COMMENTS_URL)
+                .queryParam("access_token", accessToken)
+                .queryParam("band_key", bandKey)
+                .queryParam("post_key", postKey)
+                .queryParam("sort", "+created_at");
+
+        if (nextParams != null) {
+            nextParams.forEach(builder::queryParam);
+        }
+
         try {
-            BandCommentDto response = restTemplate.getForObject(requestUrl, BandCommentDto.class);
+            BandCommentDto response = restTemplate.getForObject(builder.toUriString(), BandCommentDto.class);
             if (response != null && response.getResultData() != null) {
-                return response.getResultData().getItems();
+                return response.getResultData();
             }
         } catch (Exception e) {
             log.error("댓글 조회 실패: {}", e.getMessage());
         }
-        return List.of();
+        return new BandCommentDto.ResultData();
     }
 
     public boolean writeComment(String accessToken, String bandKey, String postKey, String content) {
